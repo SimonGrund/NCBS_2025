@@ -1,0 +1,1 @@
+../../All scripts/3.2 Deep_learning_mnist.R

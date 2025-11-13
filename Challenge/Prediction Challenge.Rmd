@@ -1,0 +1,263 @@
+# Prediction Challenge! of the AIBBC 2025 Bioinformatics and Genomics
+
+## Load library and data
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+```
+
+```{r}
+df_train <- read_rds(file = "Data/tcga_train.rds") 
+df_test <- read_rds(file = "Data/tcga_test.rds") 
+```
+
+## Quick view of all data
+
+```{r}
+# Check the data dimension
+dim(df_train)
+dim(df_test)
+```
+
+```{r}
+df_train[1:10, 1:10]
+```
+
+```{r}
+df_test[1:10, 1:10]
+```
+
+You will see that `df_test$response` and `df_test$tissue` column is `NA`.
+
+The aim of this challenge is to predict:
+
+1)  "**response",** whether the sample comes from Tumor or Normal tissue, and
+
+2)  "**tissue**", of which the sample comes from.
+
+### We will provide you a backbone for this challenge!
+
+## Better overview using PCA plot
+
+```{r}
+df_all <- rbind(df_train, df_test)
+df_exp_only <- subset(df_all, select = -c(response, tissue))
+```
+
+```{r}
+df_pca_only <- prcomp(df_exp_only, scale=TRUE)
+```
+
+```{r}
+df_pca_all <- augment(df_pca_only, subset(df_all, select = c(response, tissue)))
+df_pca_all <- column_to_rownames(df_pca_all, var = ".rownames")
+```
+
+### Plot the PCA
+
+```{r}
+df_pca_all %>% 
+  ggplot(aes(x=.fittedPC1, y=.fittedPC2)) +
+    geom_point(aes(colour = tissue)) +
+    theme_classic()
+```
+
+```{r}
+df_pca_all %>% 
+  ggplot(aes(x=.fittedPC1, y=.fittedPC2)) +
+    geom_point(aes(colour = response)) +
+    theme_classic()
+```
+
+```{r}
+df_pca_all %>% 
+  filter(!is.na(response)) %>% 
+  ggplot(aes(x=.fittedPC1, y=.fittedPC2)) +
+    geom_point(aes(colour = tissue)) +
+    theme_classic()
+```
+
+```{r}
+df_pca_all %>% 
+  filter(!is.na(response)) %>% 
+  ggplot(aes(x=.fittedPC1, y=.fittedPC2)) +
+    geom_point(aes(colour = response)) +
+    theme_classic()
+```
+
+What do you think about these plots?
+
+## Build the model!
+
+### In this example, we will use simple logistic regression. However, you are welcome to choose your own model!
+
+### 1. Response
+
+```{r}
+
+# Always make the same split
+set.seed(0)
+
+# We use 80% for training and 20% for validation
+# You can choose the split percentage to what you think is optimal!
+trainfold <- df_train %>% sample_frac(size=0.80)
+valfold  <- setdiff(df_train, trainfold)
+
+dim(trainfold)
+dim(valfold)
+
+# Here we train our glm (in this example we use simple logistic regression)
+# We also will only use some genes for simplicity. You are welcome to use any means of modeling.
+fit_response <- logistic_reg(mode = "classification") %>%
+  set_engine("glm") %>%
+  fit(response ~ TRIM48 * SPRR4 * OR8K1 * MMD2, data = trainfold)
+```
+
+```{r}
+# We predict on the validation fold
+predicted_response <- predict(fit_response, new_data = valfold, type = "class")
+
+# Combine predictions with the observed values
+pred_df <- cbind(valfold, predicted_response)
+
+# Compute accuracy directly using yardstick
+accuracy(pred_df, truth = response, estimate = .pred_class)
+```
+
+```{r}
+# Or compute the full confusion matrix
+conf_mat(pred_df, truth = response, estimate = .pred_class)
+```
+
+The prediction here is rather bad, as it predicts all responses as "Tumor". We do not want this.
+
+### 2. Tissue
+
+The same drill, but different model.
+
+```{r}
+
+# Always make the same split
+set.seed(0)
+
+# We use 80% for training and 20% for validation
+# You can choose the split percentage to what you think is optimal!
+trainfold <- df_train %>% sample_frac(size=0.80)
+valfold  <- setdiff(df_train, trainfold)
+
+dim(trainfold)
+dim(valfold)
+
+# Here we train our classifier (in this example we use multinomial regression)
+# We also will only use some genes for simplicity. You are welcome to use any means of modeling.
+fit_tissue <- multinom_reg(mode = "classification") %>%
+  set_engine("nnet") %>%
+  fit(tissue ~ TRIM48 * SPRR4 * OR8K1 * MMD2, data = trainfold)
+
+predicted_tissue <- predict(fit, new_data = valfold, type = "class")
+
+# Combine predictions with the observed values
+pred_df <- cbind(valfold, predicted_tissue)
+
+# Compute accuracy directly using yardstick
+accuracy(pred_df, truth = tissue, estimate = .pred_class)
+
+# Or the confusion matrix
+conf_mat(pred_df, truth = tissue, estimate = .pred_class)
+```
+
+This model also do not classify the tissue very well.
+
+#### **You are welcome to use any methods to predict the "**response" **and "tissue" of the test set! (for example: lasso, random forest, neural network, etc.)**
+
+## Make your actual prediction on test set: the actual unknown data!
+
+Previously, we fit the model to all of our known data.
+
+Now, we want to predict on the unknown data. In this case, the unknown data is stored in `df_test` .
+
+The predictions must have the following column and the row order must be the same as the original!
+
+-   **id**: sample_id, we recommend to not shuffle it as the row order must be the same as the original
+-   **prediction**: the predicted class, either "Normal" or "Tumor"
+
+```{r}
+
+my_prediction_response <- predict(fit_response, new_data = df_test, type = "class")
+my_prediction_tissue <- predict(fit_tissue, new_data = df_test, type = "class")
+
+submission_response <- tibble(
+  id = rownames(df_test),                 # store IDs here
+  prediction = my_prediction_response$.pred_class
+)
+
+submission_tissue <- tibble(
+  id = rownames(df_test),                 # store IDs here
+  prediction = my_prediction_tissue$.pred_class
+)
+
+head(submission_response)
+head(submission_tissue)
+```
+
+#### Also make your prediction for tissue type classification!
+
+## Submitting your answer
+
+### 1. **Main task: Tumor vs. Normal Classification**
+
+The following code will give us
+
+-   your chosen team name
+-   the name of the people on the team
+-   your estimated accuracy
+-   your predictions
+
+Please edit the values below .
+
+The filename of the output will be automated: **challenge_response.TEAMNAME.rds**
+
+Please - do not use space or funny letters in your team name.
+
+```{r}
+
+team_name        <- "team_aarhus" 
+team_people      <- c("Jakob", "Farhad") 
+team_accuracy    <- 0.8999
+team_predictions <- submission_response
+
+#
+# Always run this code
+# If it fails you have done something wrong!
+#
+
+# Save all the stuff in one object
+write_rds(x = list(team_name, team_people, team_accuracy, team_predictions), 
+          file = paste("challenge_response.", team_name, ".rds", sep=""))
+```
+
+### 2. **Secondary task: Tissue Type Prediction**
+
+Basically the same, but the filename of the output will be: **challenge_tissue.TEAMNAME.rds**
+
+```{r}
+
+team_name        <- "team_aarhus" 
+team_people      <- c("Jakob", "Farhad") 
+team_accuracy    <- 0.8111
+team_predictions <- submission_tissue
+
+#
+# Always run this code
+# If it fails you have done something wrong!
+#
+
+# Save all the stuff in one object
+write_rds(x = list(team_name, team_people, team_accuracy, team_predictions, try), 
+          file = paste("challenge_tissue.", team_name, ".rds", sep=""))
+```
+
+## Don't forget to submit your rds prediction file into Google Drive!
+
+# Good luck and have fun!
